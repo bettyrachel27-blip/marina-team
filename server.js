@@ -84,10 +84,14 @@ function formatCells(cells){
  const specials=values.filter(x=>!isHourText(x));
  if(specials.length) return [...new Set(specials)].join(" / ");
  const parts=[];
- for(let i=0;i<values.length;i+=2){
+ // Le planning réel utilise 5 colonnes par jour : début1, fin1, début2, fin2, TOTAL.
+ // L'application ne doit pas afficher le total journée (ex: 08h30 / 07h30).
+ for(let i=0;i+1<values.length;i+=2){
    if(values[i]&&values[i+1]) parts.push(`${values[i]}-${values[i+1]}`);
-   else if(values[i]) parts.push(values[i]);
  }
+ // S'il n'y a qu'une seule heure isolée, on la garde seulement comme information utile.
+ // S'il y a déjà des paires, l'heure isolée finale est considérée comme le total et ignorée.
+ if(!parts.length && values.length===1) parts.push(values[0]);
  return parts.join(" / ");
 }
 function looksLikeName(name){
@@ -150,7 +154,7 @@ function parseNameInsideDayGroup(group){
  }
  return null;
 }
-function parseSheetRows(rows,team,sheet){
+function parseSheetRows(rows,team,sheet,sheetIndex=0){
  const out=[];
  for(let dateRowIndex=0; dateRowIndex<rows.length; dateRowIndex++){
    const row=rows[dateRowIndex]||[];
@@ -223,24 +227,41 @@ function parseSheetRows(rows,team,sheet){
      .filter((r,idx,arr)=>arr.findIndex(x=>norm(x.name)===norm(r.name))===idx || r.name.length>35);
    if(planningRows.length){
      const sortKey=dateSortKey(firstDate)||dateSortKey(lastDate)||dateRowIndex;
-     out.push({id:`${team}_${sortKey}_${sheet.replace(/[^a-zA-Z0-9_-]/g,"_")}_${dateRowIndex}`,label,team,status:"draft",rows:planningRows,importedAt:new Date().toISOString(),sortKey});
+     out.push({id:`${team}_${sortKey}_${sheet.replace(/[^a-zA-Z0-9_-]/g,"_")}_${dateRowIndex}`,label,team,status:"draft",rows:planningRows,importedAt:new Date().toISOString(),sortKey,orderKey:sheetIndex*100000+dateRowIndex});
    }
  }
  return out;
 }
+function sheetIsTemplate(name){return /equipe complet|équipe complet|mod[eè]le|modele|trame|base|param|liste|donn[eé]es/i.test(name)}
+function sheetLooksOppositeTeam(name,team){
+ const n=norm(name);
+ if(team==="salle" && n.includes("cuisine")) return true;
+ if(team==="cuisine" && n.includes("salle")) return true;
+ return false;
+}
 function parseAdelphiaPlanning(wb,team){
  const out=[];
- const strict=team==="salle"?/planning\s*salle/i:/planning\s*cuisine/i;
- let sheets=wb.SheetNames.filter(s=>strict.test(s) && !/equipe complet|équipe complet|mod[eè]le|modele|trame|base/i.test(s));
- // Si les onglets ne sont pas nommés exactement, on scanne quand même tout le fichier.
- if(!sheets.length) sheets=wb.SheetNames.filter(s=>!/equipe complet|équipe complet|mod[eè]le|modele|trame|base/i.test(s));
- for(const sheet of sheets){
+ const allSheets=wb.SheetNames.filter(s=>!sheetIsTemplate(s));
+ // Avant, le code ne lisait que les onglets dont le nom correspondait exactement.
+ // Maintenant il scanne TOUS les onglets utiles, car ton fichier a des noms de semaines variables
+ // (ex: "Planning salle du 3 au 9 mars", "planning salle 14 04 - 20 04", etc.).
+ const preferred=allSheets.filter(s=>!sheetLooksOppositeTeam(s,team));
+ const sheets=preferred.length?preferred:allSheets;
+ for(let sheetIndex=0; sheetIndex<sheets.length; sheetIndex++){
+   const sheet=sheets[sheetIndex];
    const ws=wb.Sheets[sheet];
    const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,blankrows:false,defval:""});
-   if(rows&&rows.length) out.push(...parseSheetRows(rows,team,sheet));
+   if(rows&&rows.length){
+     const parsed=parseSheetRows(rows,team,sheet,sheetIndex);
+     // On garde les semaines qui contiennent de vraies lignes collaborateur.
+     out.push(...parsed.filter(w=>(w.rows||[]).length>=1));
+   }
  }
  const seen=new Set();
- return out.sort((a,b)=>(b.sortKey||0)-(a.sortKey||0)).filter(w=>{const k=w.label+"|"+w.rows.map(r=>r.name).join(","); if(seen.has(k)) return false; seen.add(k); return true}).map(({sortKey,...w})=>w);
+ // On garde l’ordre EXACT des onglets/semaines du fichier Excel.
+ // Important : ton fichier peut contenir juin année N-1 puis juin année N ; trier uniquement par date
+ // mélange les années. L’ordre du document est donc la référence.
+ return out.sort((a,b)=>(a.orderKey||0)-(b.orderKey||0)).filter(w=>{const k=w.id; if(seen.has(k)) return false; seen.add(k); return true}).map(({sortKey,orderKey,...w})=>w);
 }
 function parseExcel(file,team){
  console.log(`[IMPORT] Lecture fichier ${file} pour équipe ${team}`);
@@ -251,12 +272,19 @@ function parseExcel(file,team){
  return weeks;
 }
 function mergeWeeks(oldWeeks,newWeeks){
- const map=new Map((oldWeeks||[]).map(w=>[w.id,w]));
+ // Si on réimporte le même fichier, on remplace les semaines trouvées mais on conserve l’ordre Excel
+ // pour les nouvelles semaines. Les anciennes qui ne sont pas dans le fichier restent à la fin.
+ const oldMap=new Map((oldWeeks||[]).map(w=>[w.id,w]));
+ const newIds=new Set(newWeeks.map(w=>w.id));
+ const merged=[];
  for(const w of newWeeks){
-   const prev=map.get(w.id);
-   map.set(w.id, prev?{...w,status:prev.status||"draft",publishedAt:prev.publishedAt||null}:w);
+   const prev=oldMap.get(w.id);
+   merged.push(prev?{...w,status:prev.status||"draft",publishedAt:prev.publishedAt||null}:w);
  }
- return Array.from(map.values()).sort((a,b)=>dateSortKey((b.label.match(/du ([^ ]+)/)||[])[1])-dateSortKey((a.label.match(/du ([^ ]+)/)||[])[1]));
+ for(const w of (oldWeeks||[])){
+   if(!newIds.has(w.id)) merged.push(w);
+ }
+ return merged;
 }
 app.post("/api/login",(req,res)=>{const d=db(),u=d.users.find(x=>x.id===req.body.id); if(!u||!bcrypt.compareSync(req.body.password,u.passwordHash)) return res.status(401).json({error:"Identifiant ou mot de passe incorrect"}); const user=pub(u); res.json({token:jwt.sign(user,SECRET,{expiresIn:"7d"}),user})});
 app.get("/api/users",auth,(req,res)=>{const d=db(); if(req.user.role==="admin") return res.json(d.users.map(pub)); if(req.user.role==="manager") return res.json(d.users.filter(u=>u.team===req.user.team).map(pub)); res.json([req.user])});
