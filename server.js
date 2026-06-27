@@ -165,7 +165,11 @@ function parseSheetRows(rows,team,sheet,sheetIndex=0){
    const dayCols=groupStartColumnsFromDateRow(row);
    if(dayCols.length<7) continue;
    const firstDate=row[dayCols[0]], lastDate=row[dayCols[6]];
-   const label=`Planning ${team} du ${excelDateLabel(firstDate)} au ${excelDateLabel(lastDate)}`;
+   const startLabel=excelDateLabel(firstDate);
+   const endLabel=excelDateLabel(lastDate);
+   if(!/^\d{2}\/\d{2}$/.test(startLabel)||!/^\d{2}\/\d{2}$/.test(endLabel)) continue;
+   if(startLabel.startsWith('00/')||endLabel.startsWith('00/')) continue;
+   const label=`Planning ${team} du ${startLabel} au ${endLabel}`;
    const map=new Map();
    const fallbackRows=[];
    const firstDayCol=dayCols[0];
