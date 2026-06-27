@@ -110,6 +110,46 @@ function findDateColumns(row){
  }
  return [];
 }
+
+function groupStartColumnsFromDateRow(row){
+ const explicit=[];
+ for(let i=0;i<row.length;i++) if(isDateLike(row[i])) explicit.push(i);
+ if(explicit.length>=7) return explicit.slice(0,7);
+ if(explicit.length>=1) return Array.from({length:7},(_,d)=>explicit[0]+d*5);
+ return [];
+}
+function looksLikeTimeOrStatus(v){
+ const x=excelTime(v), low=norm(x);
+ if(!x) return false;
+ if(isHourText(x)) return true;
+ return ["repos","repo","recup","cp","conges","conges","jf","abs","absence","am","arret","maladie","formation","ecole"].some(k=>low.includes(norm(k)));
+}
+function looksLikeEmployeeCell(v){
+ const t=clean(v), low=norm(t);
+ if(!looksLikeName(t)) return false;
+ if(looksLikeTimeOrStatus(t)) return false;
+ const bad=["chef de rang","runner","commis","maitre d","maître d","petit dejeuner","petit-déjeuner","alternant","alternante","responsable","plongeur","second","chef cuisine","poste","collaborateur","total","semaine"];
+ if(bad.some(x=>low===norm(x)||low.includes(norm(x)))) return false;
+ return true;
+}
+function addDayForName(map,name,dayIndex,value){
+ name=clean(name); value=clean(value);
+ if(!name || !value) return;
+ const key=norm(name);
+ if(!map.has(key)) map.set(key,{name,days:["","","","","","",""]});
+ const row=map.get(key);
+ if(row.days[dayIndex]){
+   if(!row.days[dayIndex].includes(value)) row.days[dayIndex]+=" / "+value;
+ }else row.days[dayIndex]=value;
+}
+function parseNameInsideDayGroup(group){
+ // Dans le planning réel, le prénom est souvent dans la première cellule du bloc du jour,
+ // puis les horaires sont dans les colonnes suivantes.
+ for(let i=0;i<Math.min(group.length,3);i++){
+   if(looksLikeEmployeeCell(group[i])) return {name:clean(group[i]), offset:i+1};
+ }
+ return null;
+}
 function parseSheetRows(rows,team,sheet){
  const out=[];
  for(let dateRowIndex=0; dateRowIndex<rows.length; dateRowIndex++){
@@ -117,27 +157,70 @@ function parseSheetRows(rows,team,sheet){
    const dateCount=row.filter(isDateLike).length;
    const dayNameCount=row.filter(v=>/\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/.test(norm(v))).length;
    if(dateCount<1 && dayNameCount<3) continue;
-   const dayCols=findDateColumns(row);
+
+   const dayCols=groupStartColumnsFromDateRow(row);
    if(dayCols.length<7) continue;
    const firstDate=row[dayCols[0]], lastDate=row[dayCols[6]];
    const label=`Planning ${team} du ${excelDateLabel(firstDate)} au ${excelDateLabel(lastDate)}`;
-   const planningRows=[];
+   const map=new Map();
+   const fallbackRows=[];
    const firstDayCol=dayCols[0];
-   for(let r=dateRowIndex+1; r<Math.min(rows.length, dateRowIndex+60); r++){
+
+   for(let r=dateRowIndex+1; r<Math.min(rows.length, dateRowIndex+90); r++){
      const rr=rows[r]||[];
-     const left=rr.slice(0,Math.max(1,firstDayCol)).map(clean).filter(looksLikeName);
-     const name=left.length?left[left.length-1]:clean(rr[1]||rr[0]);
-     const low=norm(name);
-     if(low.includes("legende")||low.includes("groupe")) break;
-     if(!looksLikeName(name)) continue;
-     const days=[];
+     const allText=rr.map(clean).filter(Boolean).join(" ");
+     const lowAll=norm(allText);
+     if(!allText) continue;
+     if(lowAll.includes("legende")||lowAll.includes("légende")||lowAll.includes("groupe suivant")||lowAll.includes("signature")) break;
+     if(lowAll.includes("total semaine")||lowAll.includes("total heures")) continue;
+
+     let rowHadNameInDay=false;
      for(let d=0; d<7; d++){
        const start=dayCols[d];
-       const end=d<6?dayCols[d+1]:Math.min(rr.length,start+5);
-       days.push(formatCells(rr.slice(start,end)));
+       const end=d<6?dayCols[d+1]:Math.min(Math.max(rr.length,start+5),start+5);
+       const group=rr.slice(start,end);
+       const parsed=parseNameInsideDayGroup(group);
+       if(parsed){
+         rowHadNameInDay=true;
+         let schedule=formatCells(group.slice(parsed.offset));
+         // Si le prénom est seul dans le bloc, on garde le texte suivant utile si présent.
+         if(!schedule) schedule=formatCells(group.filter((_,idx)=>idx!==parsed.offset-1));
+         addDayForName(map,parsed.name,d,schedule||"Présent");
+       }
      }
-     if(days.some(Boolean)) planningRows.push({name,days});
+
+     // Ancien format : un prénom à gauche, puis 7 blocs d'horaires.
+     if(!rowHadNameInDay){
+       const left=rr.slice(0,Math.max(1,firstDayCol)).map(clean).filter(looksLikeEmployeeCell);
+       const name=left.length?left[left.length-1]:"";
+       if(name){
+         const days=[];
+         for(let d=0; d<7; d++){
+           const start=dayCols[d];
+           const end=d<6?dayCols[d+1]:Math.min(rr.length,start+5);
+           days.push(formatCells(rr.slice(start,end)));
+         }
+         if(days.some(Boolean)) fallbackRows.push({name,days});
+       }else{
+         // Ligne événement : si un texte est présent dans un bloc jour, on le conserve comme événement.
+         const eventName=rr.slice(0,Math.max(1,firstDayCol)).map(clean).filter(Boolean).pop();
+         if(eventName && !/poste|collaborateur/i.test(eventName)){
+           const days=[];
+           for(let d=0; d<7; d++){
+             const start=dayCols[d];
+             const end=d<6?dayCols[d+1]:Math.min(rr.length,start+5);
+             const v=rr.slice(start,end).map(clean).filter(Boolean).join(" ");
+             days.push(v);
+           }
+           if(days.some(Boolean) && looksLikeName(eventName)) fallbackRows.push({name:eventName,days});
+         }
+       }
+     }
    }
+
+   const planningRows=[...map.values(),...fallbackRows]
+     .filter(r=>r.days && r.days.some(Boolean))
+     .filter((r,idx,arr)=>arr.findIndex(x=>norm(x.name)===norm(r.name))===idx || r.name.length>35);
    if(planningRows.length){
      const sortKey=dateSortKey(firstDate)||dateSortKey(lastDate)||dateRowIndex;
      out.push({id:`${team}_${sortKey}_${sheet.replace(/[^a-zA-Z0-9_-]/g,"_")}_${dateRowIndex}`,label,team,status:"draft",rows:planningRows,importedAt:new Date().toISOString(),sortKey});
@@ -161,7 +244,7 @@ function parseAdelphiaPlanning(wb,team){
 }
 function parseExcel(file,team){
  console.log(`[IMPORT] Lecture fichier ${file} pour équipe ${team}`);
- const wb=XLSX.readFile(file,{cellDates:false,raw:true});
+ const wb=XLSX.readFile(file,{cellDates:false,raw:true,WTF:false});
  const weeks=parseAdelphiaPlanning(wb,team);
  console.log(`[IMPORT] ${weeks.length} semaine(s) détectée(s) pour ${team}`);
  if(!weeks.length) throw new Error(`Aucune semaine ${team} détectée. L'import scanne maintenant tous les onglets : vérifie que le fichier contient bien les dates et les prénoms.`);

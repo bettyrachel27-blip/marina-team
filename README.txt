@@ -1,12 +1,17 @@
-Marina Team - version import Excel adapte planning reel
+Marina Team - V6 import Excel robuste
 
-Version corrigée :
-- import Excel plus souple, compatible .xlsx / .xlsb / .xls / .csv ;
-- scan automatique des onglets si les noms de feuilles changent ;
-- détection des semaines par dates / jours ;
-- récupération des prénoms et des horaires même si le planning change légèrement ;
-- ajout des nouvelles semaines sans supprimer les anciennes ;
-- affichage des semaines les plus récentes en premier ;
-- message d'erreur clair si l'import échoue.
+Corrections principales :
+- lecture des fichiers .xlsx, .xls, .xlsb et .csv ;
+- scan de tous les onglets planning, même si le nom de l'onglet n'a pas exactement le même format ;
+- détection des semaines via les dates dans le tableau ;
+- correction du parser : la colonne B peut contenir le poste, les prénoms sont maintenant cherchés dans les blocs de jours ;
+- chaque jour est lu par groupe de 5 colonnes : prénom / début 1 / fin 1 / début 2 / fin 2 ;
+- les anciennes semaines sont conservées et les semaines réimportées sont remplacées ;
+- les semaines sont triées de la plus récente à la plus ancienne.
 
-Déploiement Render : envoyer ce dossier sur GitHub puis cliquer sur Deploy Latest Commit.
+Déploiement Render :
+1. Dézipper ce dossier.
+2. Envoyer tous les fichiers sur GitHub en remplaçant les anciens.
+3. Sur Render : Manual Deploy > Deploy latest commit.
+4. Se connecter avec Rachel : identifiant rachel / mot de passe 2802.
+5. Importer le fichier Excel depuis l'onglet Plannings.
