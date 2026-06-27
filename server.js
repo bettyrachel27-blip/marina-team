@@ -32,104 +32,166 @@ function auth(req,res,next){try{req.user=jwt.verify((req.headers.authorization||
 function canSee(u,t){return u.role==="admin"||u.role==="manager"||u.team===t}
 function notif(d,title,body,team=null,admin=false){d.notifications.unshift({id:Date.now()+Math.random(),title,body,team,admin,createdAt:new Date().toISOString()})}
 
+
 function clean(x){return String(x??"").replace(/\s+/g," ").trim()}
-function isExcelDate(v){return typeof v==="number" && v>30000 && v<60000}
+function norm(x){return clean(x).normalize("NFD").replace(/[\u0300-\u036f]/g,"").toLowerCase()}
+function isExcelSerialDate(v){return typeof v==="number" && v>30000 && v<60000}
+function isJsDate(v){return Object.prototype.toString.call(v)==='[object Date]' && !isNaN(v)}
+function serialToDate(v){return new Date(Math.round((v-25569)*86400*1000))}
+function dateLabelFromDate(d){const dd=String(d.getUTCDate()).padStart(2,"0"), mm=String(d.getUTCMonth()+1).padStart(2,"0"); return `${dd}/${mm}`}
 function excelDateLabel(v){
- const d=new Date(Math.round((v-25569)*86400*1000));
- const dd=String(d.getUTCDate()).padStart(2,"0"), mm=String(d.getUTCMonth()+1).padStart(2,"0");
- return `${dd}/${mm}`;
+ if(isExcelSerialDate(v)) return dateLabelFromDate(serialToDate(v));
+ if(isJsDate(v)) return dateLabelFromDate(v);
+ const t=clean(v);
+ const m=t.match(/(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.]\d{2,4})?/);
+ if(m) return `${m[1].padStart(2,"0")}/${m[2].padStart(2,"0")}`;
+ return t || "?";
 }
+function dateSortKey(v){
+ if(isExcelSerialDate(v)) return v;
+ if(isJsDate(v)) return Math.round(v.getTime()/86400000)+25569;
+ const t=clean(v); const m=t.match(/(\d{1,2})[\/\-.](\d{1,2})(?:[\/\-.](\d{2,4}))?/);
+ if(m){let y=m[3]?Number(m[3]):new Date().getFullYear(); if(y<100)y+=2000; return Math.round(Date.UTC(y,Number(m[2])-1,Number(m[1]))/86400000)+25569}
+ return 0;
+}
+function isDateLike(v){
+ if(isExcelSerialDate(v)||isJsDate(v)) return true;
+ const t=norm(v); if(!t) return false;
+ return /\d{1,2}[\/\-.]\d{1,2}/.test(t) || /\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/.test(t);
+}
+function isTimeNumber(v){return typeof v==="number" && v>=0 && v<1}
 function excelTime(v){
  if(v===null||v===undefined||v==="") return "";
- if(typeof v==="number"){
-   let frac=v%1; if(frac<0) frac+=1;
-   let mins=Math.round(frac*24*60);
-   if(mins>=1440) mins-=1440;
+ if(isTimeNumber(v)){
+   let mins=Math.round(v*24*60); if(mins>=1440) mins-=1440;
    const h=String(Math.floor(mins/60)).padStart(2,"0"), m=String(mins%60).padStart(2,"0");
    return `${h}h${m}`;
  }
- const t=clean(v);
- if(!t) return "";
- const low=t.toLowerCase();
- if(["repos","récup","recup","cp","jf","abs","am","formation"].includes(low)) return t.toUpperCase();
+ const t=clean(v); if(!t) return "";
+ const low=norm(t);
+ const special=["repos","repo","recup","récup","cp","conges","congés","jf","abs","absence","am","arret","arrêt","maladie","formation","ecole","école"];
+ if(special.some(x=>low===norm(x)||low.includes(norm(x)))) return t.toUpperCase();
+ const m=t.match(/(\d{1,2})\s*[:hH]\s*(\d{2})?/);
+ if(m) return `${String(Number(m[1])).padStart(2,"0")}h${String(m[2]||"00").padStart(2,"0")}`;
+ if(/^\d{1,2}$/.test(t)) return `${String(Number(t)).padStart(2,"0")}h00`;
  return t;
 }
-function cellHasUsefulValue(v){
- if(v===null||v===undefined||v==="") return false;
- if(typeof v==="number") return true;
- return clean(v)!=="";
-}
-function formatDay(row,base){
- // Ton planning Adelphia a 5 colonnes par jour : début 1, fin 1, début 2, fin 2, total.
- const a=row[base], b=row[base+1], c=row[base+2], d=row[base+3];
- const block=[a,b,c,d].filter(cellHasUsefulValue);
- if(!block.length) return "";
- const special=block.map(excelTime).filter(x=>x && !/^\d{2}h\d{2}$/.test(x));
- if(special.length) return [...new Set(special)].join(" / ");
- const p1=excelTime(a)&&excelTime(b)?`${excelTime(a)}-${excelTime(b)}`:"";
- const p2=excelTime(c)&&excelTime(d)?`${excelTime(c)}-${excelTime(d)}`:"";
- return [p1,p2].filter(Boolean).join(" / ");
+function cellHasUsefulValue(v){return !(v===null||v===undefined||v===""||clean(v)==="")}
+function isHourText(x){return /^\d{2}h\d{2}$/.test(x)}
+function formatCells(cells){
+ const values=cells.filter(cellHasUsefulValue).map(excelTime).filter(Boolean);
+ if(!values.length) return "";
+ const specials=values.filter(x=>!isHourText(x));
+ if(specials.length) return [...new Set(specials)].join(" / ");
+ const parts=[];
+ for(let i=0;i<values.length;i+=2){
+   if(values[i]&&values[i+1]) parts.push(`${values[i]}-${values[i+1]}`);
+   else if(values[i]) parts.push(values[i]);
+ }
+ return parts.join(" / ");
 }
 function looksLikeName(name){
- const n=clean(name);
- if(!n) return false;
- const low=n.toLowerCase();
- if(low.includes("légende")||low.includes("legende")||low.includes("groupe")||low.includes("pause")) return false;
- if(low.includes(":")) return false; // ignore les remarques type "Thierry : poussière"
+ const n=clean(name); if(!n) return false;
+ const low=norm(n);
+ if(low.includes("legende")||low.includes("groupe")||low.includes("pause")||low.includes("total")||low.includes("attention")) return false;
+ if(low.includes(":")) return false;
  if(low.includes("cuisine et salle")) return false;
- if(low.includes("attention")) return false;
  if(/^[0-9.,\s]+$/.test(n)) return false;
- return true;
+ if(n.length>60) return false;
+ return /[A-Za-zÀ-ÿ]/.test(n);
 }
-function parseAdelphiaPlanning(wb,team){
+function findDateColumns(row){
+ const cols=[];
+ for(let i=0;i<row.length;i++) if(isDateLike(row[i])) cols.push(i);
+ if(cols.length>=7) return cols.slice(0,7);
+ if(cols.length>=1){
+   const start=cols[0];
+   return Array.from({length:7},(_,d)=>start+d*5);
+ }
+ return [];
+}
+function parseSheetRows(rows,team,sheet){
  const out=[];
- const sheetRegex=team==="salle"?/planning\s*salle/i:/planning\s*cuisine/i;
- for(const sheet of wb.SheetNames){
-   if(!sheetRegex.test(sheet)) continue;
-   if(/equipe complet|équipe complet|mod[eè]le|modele|trame|base/i.test(sheet)) continue;
-   const ws=wb.Sheets[sheet];
-   const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,blankrows:false,defval:""});
-   if(!rows||rows.length<3) continue;
-   const dateRowIndex=rows.findIndex(r=>r && r.filter(isExcelDate).length>=3);
-   if(dateRowIndex<0) continue;
-   const dateRow=rows[dateRowIndex];
-   const firstDateCol=dateRow.findIndex(isExcelDate);
-   if(firstDateCol<0) continue;
-   const dayBases=[];
-   for(let d=0; d<7; d++) dayBases.push(firstDateCol + d*5);
-   const firstDate=dateRow[dayBases[0]], lastDate=dateRow[dayBases[6]];
+ for(let dateRowIndex=0; dateRowIndex<rows.length; dateRowIndex++){
+   const row=rows[dateRowIndex]||[];
+   const dateCount=row.filter(isDateLike).length;
+   const dayNameCount=row.filter(v=>/\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b/.test(norm(v))).length;
+   if(dateCount<1 && dayNameCount<3) continue;
+   const dayCols=findDateColumns(row);
+   if(dayCols.length<7) continue;
+   const firstDate=row[dayCols[0]], lastDate=row[dayCols[6]];
    const label=`Planning ${team} du ${excelDateLabel(firstDate)} au ${excelDateLabel(lastDate)}`;
    const planningRows=[];
-   for(let r=dateRowIndex+1; r<Math.min(rows.length, dateRowIndex+40); r++){
-     const row=rows[r]||[];
-     const name=clean(row[1]); // Dans ton Excel, les prénoms sont en colonne B.
-     const low=name.toLowerCase();
-     if(low.includes("légende")||low.includes("legende")||low.includes("groupe")) break;
+   const firstDayCol=dayCols[0];
+   for(let r=dateRowIndex+1; r<Math.min(rows.length, dateRowIndex+60); r++){
+     const rr=rows[r]||[];
+     const left=rr.slice(0,Math.max(1,firstDayCol)).map(clean).filter(looksLikeName);
+     const name=left.length?left[left.length-1]:clean(rr[1]||rr[0]);
+     const low=norm(name);
+     if(low.includes("legende")||low.includes("groupe")) break;
      if(!looksLikeName(name)) continue;
-     const days=dayBases.map(base=>formatDay(row,base));
+     const days=[];
+     for(let d=0; d<7; d++){
+       const start=dayCols[d];
+       const end=d<6?dayCols[d+1]:Math.min(rr.length,start+5);
+       days.push(formatCells(rr.slice(start,end)));
+     }
      if(days.some(Boolean)) planningRows.push({name,days});
    }
    if(planningRows.length){
-     const sortKey=isExcelDate(firstDate)?firstDate:0;
-     out.push({id:`${team}_${sortKey}_${sheet.replace(/[^a-zA-Z0-9_-]/g,"_")}`,label,team,status:"draft",rows:planningRows,importedAt:new Date().toISOString(),sortKey});
+     const sortKey=dateSortKey(firstDate)||dateSortKey(lastDate)||dateRowIndex;
+     out.push({id:`${team}_${sortKey}_${sheet.replace(/[^a-zA-Z0-9_-]/g,"_")}_${dateRowIndex}`,label,team,status:"draft",rows:planningRows,importedAt:new Date().toISOString(),sortKey});
    }
  }
- out.sort((a,b)=>(a.sortKey||0)-(b.sortKey||0));
- return out.map(({sortKey,...w})=>w);
+ return out;
+}
+function parseAdelphiaPlanning(wb,team){
+ const out=[];
+ const strict=team==="salle"?/planning\s*salle/i:/planning\s*cuisine/i;
+ let sheets=wb.SheetNames.filter(s=>strict.test(s) && !/equipe complet|équipe complet|mod[eè]le|modele|trame|base/i.test(s));
+ // Si les onglets ne sont pas nommés exactement, on scanne quand même tout le fichier.
+ if(!sheets.length) sheets=wb.SheetNames.filter(s=>!/equipe complet|équipe complet|mod[eè]le|modele|trame|base/i.test(s));
+ for(const sheet of sheets){
+   const ws=wb.Sheets[sheet];
+   const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,blankrows:false,defval:""});
+   if(rows&&rows.length) out.push(...parseSheetRows(rows,team,sheet));
+ }
+ const seen=new Set();
+ return out.sort((a,b)=>(b.sortKey||0)-(a.sortKey||0)).filter(w=>{const k=w.label+"|"+w.rows.map(r=>r.name).join(","); if(seen.has(k)) return false; seen.add(k); return true}).map(({sortKey,...w})=>w);
 }
 function parseExcel(file,team){
  console.log(`[IMPORT] Lecture fichier ${file} pour équipe ${team}`);
  const wb=XLSX.readFile(file,{cellDates:false,raw:true});
  const weeks=parseAdelphiaPlanning(wb,team);
  console.log(`[IMPORT] ${weeks.length} semaine(s) détectée(s) pour ${team}`);
- if(!weeks.length){
-   throw new Error(`Aucune semaine ${team} détectée dans ce fichier. Vérifie que les feuilles commencent par Planning ${team}.`);
- }
+ if(!weeks.length) throw new Error(`Aucune semaine ${team} détectée. L'import scanne maintenant tous les onglets : vérifie que le fichier contient bien les dates et les prénoms.`);
  return weeks;
+}
+function mergeWeeks(oldWeeks,newWeeks){
+ const map=new Map((oldWeeks||[]).map(w=>[w.id,w]));
+ for(const w of newWeeks){
+   const prev=map.get(w.id);
+   map.set(w.id, prev?{...w,status:prev.status||"draft",publishedAt:prev.publishedAt||null}:w);
+ }
+ return Array.from(map.values()).sort((a,b)=>dateSortKey((b.label.match(/du ([^ ]+)/)||[])[1])-dateSortKey((a.label.match(/du ([^ ]+)/)||[])[1]));
 }
 app.post("/api/login",(req,res)=>{const d=db(),u=d.users.find(x=>x.id===req.body.id); if(!u||!bcrypt.compareSync(req.body.password,u.passwordHash)) return res.status(401).json({error:"Identifiant ou mot de passe incorrect"}); const user=pub(u); res.json({token:jwt.sign(user,SECRET,{expiresIn:"7d"}),user})});
 app.get("/api/users",auth,(req,res)=>{const d=db(); if(req.user.role==="admin") return res.json(d.users.map(pub)); if(req.user.role==="manager") return res.json(d.users.filter(u=>u.team===req.user.team).map(pub)); res.json([req.user])});
-app.post("/api/import-planning",auth,upload.single("file"),(req,res)=>{if(req.user.role!=="admin") return res.status(403).json({error:"Réservé Rachel"}); const team=req.body.team; if(!["salle","cuisine"].includes(team)||!req.file) return res.status(400).json({error:"Fichier ou équipe invalide"}); const d=db(),weeks=parseExcel(req.file.path,team),old=d.plannings[team]||[]; d.plannings[team]=weeks.map(w=>{const prev=old.find(x=>x.id===w.id); return prev?{...w,status:prev.status||"draft",publishedAt:prev.publishedAt||null}:w}); notif(d,`Planning ${team} importé`,`${weeks.length} semaine(s) en brouillon.`,team,true); save(d); res.json({ok:true,count:weeks.length})});
+app.post("/api/import-planning",auth,upload.single("file"),(req,res)=>{
+ try{
+  if(req.user.role!=="admin") return res.status(403).json({error:"Réservé Rachel"});
+  const team=req.body.team;
+  if(!["salle","cuisine"].includes(team)||!req.file) return res.status(400).json({error:"Fichier ou équipe invalide"});
+  const d=db(),weeks=parseExcel(req.file.path,team),oldWeeks=d.plannings[team]||[];
+  d.plannings[team]=mergeWeeks(oldWeeks,weeks);
+  notif(d,`Planning ${team} importé`,`${weeks.length} nouvelle(s) semaine(s) détectée(s) et ajoutée(s) en brouillon.`,team,true);
+  save(d);
+  res.json({ok:true,count:weeks.length,labels:weeks.map(w=>w.label)});
+ }catch(e){
+  console.error("[IMPORT ERREUR]",e);
+  res.status(400).json({error:e.message||"Erreur import Excel"});
+ }finally{try{if(req.file)fs.unlinkSync(req.file.path)}catch{}}
+});
 app.get("/api/plannings",auth,(req,res)=>{const d=db(),r={}; for(const t of ["salle","cuisine"]){if(!canSee(req.user,t))continue; r[t]=req.user.role==="admin"?d.plannings[t]:d.plannings[t].filter(w=>w.status==="published")} res.json(r)});
 app.post("/api/plannings/:team/:id/publish",auth,(req,res)=>{if(req.user.role!=="admin")return res.status(403).json({error:"Réservé Rachel"}); const d=db(),w=d.plannings[req.params.team]?.find(x=>x.id===req.params.id); if(!w)return res.status(404).json({error:"Semaine introuvable"}); w.status="published";w.publishedAt=new Date().toISOString();notif(d,`Nouveau planning ${req.params.team}`,`${w.label} est disponible.`,req.params.team,false);save(d);res.json({ok:true})});
 app.post("/api/plannings/:team/:id/unpublish",auth,(req,res)=>{if(req.user.role!=="admin")return res.status(403).json({error:"Réservé Rachel"}); const d=db(),w=d.plannings[req.params.team]?.find(x=>x.id===req.params.id); if(!w)return res.status(404).json({error:"Semaine introuvable"}); w.status="draft";save(d);res.json({ok:true})});

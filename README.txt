@@ -1,15 +1,12 @@
-# Marina Team V1 Pro
+Marina Team - version import Excel adapte planning reel
 
-Connexion test :
-- Rachel : rachel / 2802
-- Autres salariés : identifiant + 0000
+Version corrigée :
+- import Excel plus souple, compatible .xlsx / .xlsb / .xls / .csv ;
+- scan automatique des onglets si les noms de feuilles changent ;
+- détection des semaines par dates / jours ;
+- récupération des prénoms et des horaires même si le planning change légèrement ;
+- ajout des nouvelles semaines sans supprimer les anciennes ;
+- affichage des semaines les plus récentes en premier ;
+- message d'erreur clair si l'import échoue.
 
-Pour lancer :
-1. Installer Node.js
-2. Dans ce dossier :
-   npm install
-   npm start
-3. Ouvrir http://localhost:3000
-
-Fonction planning :
-Serveur Excel -> FreeFileSync -> Google Drive -> import dans Marina Team -> brouillon -> Rachel publie.
+Déploiement Render : envoyer ce dossier sur GitHub puis cliquer sur Deploy Latest Commit.
