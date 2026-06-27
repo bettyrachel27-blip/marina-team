@@ -32,20 +32,127 @@ function auth(req,res,next){try{req.user=jwt.verify((req.headers.authorization||
 function canSee(u,t){return u.role==="admin"||u.role==="manager"||u.team===t}
 function notif(d,title,body,team=null,admin=false){d.notifications.unshift({id:Date.now()+Math.random(),title,body,team,admin,createdAt:new Date().toISOString()})}
 function clean(x){return String(x||"").trim()}
+
+function excelDateToFR(v){
+ if(typeof v!=="number" || !isFinite(v)) return "";
+ const d = new Date(Math.round((v - 25569) * 86400 * 1000));
+ return d.toLocaleDateString("fr-FR",{weekday:"short", day:"2-digit", month:"2-digit"}).replace(".","");
+}
+function sheetStartSerial(sheetName, rows){
+ const serials = [];
+ if(rows && rows[1]){
+   for(const c of [2,7,12,17,22,27,32]){
+     const v = rows[1][c];
+     if(typeof v === "number" && v > 30000 && v < 60000) serials.push(v);
+   }
+ }
+ const m = String(sheetName).match(/(\d{1,2})[-\/ ](\d{1,2})/);
+ if(serials.length) return Math.min(...serials);
+ return 0;
+}
+function valueToTime(v){
+ if(v===null || v===undefined || v==="") return "";
+ if(typeof v==="string"){
+   const s=v.trim();
+   if(!s) return "";
+   if(/^\d{1,2}[:h]\d{0,2}$/i.test(s)){
+     return s.replace("h",":").replace(/:$/,"h00").replace(":", "h");
+   }
+   return s;
+ }
+ if(typeof v==="number" && isFinite(v)){
+   // Excel stores hours as fraction of a day.
+   if(v >= 0 && v < 1){
+     let mins = Math.round(v*24*60);
+     mins = ((mins % 1440) + 1440) % 1440;
+     const h = Math.floor(mins/60);
+     const m = mins%60;
+     return String(h).padStart(2,"0")+"h"+String(m).padStart(2,"0");
+   }
+   return String(v);
+ }
+ return String(v);
+}
+function totalToHours(v){
+ if(typeof v==="number" && isFinite(v)){
+   // If total is a fraction of a day, convert to hours.
+   if(v >= 0 && v < 1) return (v*24).toFixed(2).replace(".",",")+"h";
+   return String(v);
+ }
+ return "";
+}
+function parseDayBlock(row, startCol){
+ const vals = [0,1,2,3,4].map(i => row[startCol+i]);
+ const textVals = vals.map(v => String(v ?? "").trim()).filter(Boolean);
+ const status = textVals.find(s => /^[A-Za-zÀ-ÿ]{2,}$/.test(s) && !/^\d/.test(s));
+ if(status) return status.toUpperCase();
+
+ const times = vals.slice(0,4).map(valueToTime).filter(Boolean);
+ const total = totalToHours(vals[4]);
+ if(times.length >= 4) return `${times[0]}-${times[1]} / ${times[2]}-${times[3]}${total ? " · "+total : ""}`;
+ if(times.length === 3) return `${times[0]}-${times[1]} / ${times[2]}${total ? " · "+total : ""}`;
+ if(times.length === 2) return `${times[0]}-${times[1]}${total ? " · "+total : ""}`;
+ if(times.length === 1) return times[0] + (total ? " · "+total : "");
+ if(total) return total;
+ return "";
+}
+function isPlanningSheetName(name, team){
+ const s = String(name || "").toLowerCase();
+ if(!s.includes("planning")) return false;
+ if(team === "salle" && !s.includes("salle")) return false;
+ if(team === "cuisine" && !s.includes("cuisine")) return false;
+ if(s.includes("equipe complet") || s.includes("équipe complet") || s.includes("modele") || s.includes("modèle") || s.includes("test")) return false;
+ return true;
+}
 function parseExcel(file,team){
- const wb=XLSX.readFile(file,{cellDates:false}), out=[], days=["lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"];
+ const wb=XLSX.readFile(file,{cellDates:false});
+ const dayNames=["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
+ const starts=[2,7,12,17,22,27,32];
+ const candidates=[];
  for(const sheet of wb.SheetNames){
-  const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,raw:false,blankrows:false});
-  if(!rows||rows.length<2) continue;
-  let h=rows.findIndex(r=>r&&r.some(c=>days.includes(clean(c).toLowerCase()))); if(h<0) h=0;
-  const header=rows[h]||[], idxs=days.map(day=>{let i=header.findIndex(c=>clean(c).toLowerCase().includes(day));return i>=0?i:null});
-  let nameCol=0; for(let c=0;c<Math.min(8,header.length||8);c++){let sample=rows.slice(h+1,h+15).map(r=>clean(r&&r[c])).filter(Boolean); if(sample.length>=2){nameCol=c;break}}
+  if(!isPlanningSheetName(sheet, team)) continue;
+  const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,raw:true,blankrows:false});
+  if(!rows||rows.length<3) continue;
+  const startSerial=sheetStartSerial(sheet, rows);
+  candidates.push({sheet, rows, startSerial});
+ }
+ // Affiche les semaines les plus récentes d'abord, sans lire la feuille "équipe complet".
+ candidates.sort((a,b)=>b.startSerial-a.startSerial);
+ const out=[];
+ for(const item of candidates){
+  const rows=item.rows;
+  const labels=starts.map((c,i)=>{
+    const d = rows[1] ? excelDateToFR(rows[1][c]) : "";
+    return d ? `${dayNames[i]} ${d}` : dayNames[i];
+  });
   const planningRows=[];
-  for(let r=h+1;r<rows.length;r++){const row=rows[r]||[], name=clean(row[nameCol]); if(!name) continue; const low=name.toLowerCase(); if(["total","lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"].some(x=>low.includes(x))) continue; const vals=idxs.map(i=>i===null?"":clean(row[i])); if(vals.some(Boolean)) planningRows.push({name,days:vals})}
-  if(planningRows.length) out.push({id:`${team}_${sheet.replace(/[^a-zA-Z0-9_-]/g,"_")}`,label:sheet,team,status:"draft",rows:planningRows,importedAt:new Date().toISOString()});
+  for(let r=2;r<rows.length;r++){
+    const row=rows[r]||[];
+    const name=clean(row[1]);
+    if(!name) continue;
+    const low=name.toLowerCase();
+    if(low.includes("groupe") || low.includes("légende") || low.includes("legende") || low.includes("pause") || low.includes("total")) break;
+    if(name.length<2) continue;
+    const days=starts.map(c=>parseDayBlock(row,c));
+    if(!days.some(Boolean)) continue;
+    planningRows.push({name,days});
+  }
+  if(planningRows.length){
+    out.push({
+      id:`${team}_${item.sheet.replace(/[^a-zA-Z0-9_-]/g,"_")}`,
+      label:item.sheet,
+      team,
+      status:"draft",
+      daysLabels:labels,
+      rows:planningRows,
+      importedAt:new Date().toISOString(),
+      startSerial:item.startSerial
+    });
+  }
  }
  return out;
 }
+
 app.post("/api/login",(req,res)=>{const d=db(),u=d.users.find(x=>x.id===req.body.id); if(!u||!bcrypt.compareSync(req.body.password,u.passwordHash)) return res.status(401).json({error:"Identifiant ou mot de passe incorrect"}); const user=pub(u); res.json({token:jwt.sign(user,SECRET,{expiresIn:"7d"}),user})});
 app.get("/api/users",auth,(req,res)=>{const d=db(); if(req.user.role==="admin") return res.json(d.users.map(pub)); if(req.user.role==="manager") return res.json(d.users.filter(u=>u.team===req.user.team).map(pub)); res.json([req.user])});
 app.post("/api/import-planning",auth,upload.single("file"),(req,res)=>{if(req.user.role!=="admin") return res.status(403).json({error:"Réservé Rachel"}); const team=req.body.team; if(!["salle","cuisine"].includes(team)||!req.file) return res.status(400).json({error:"Fichier ou équipe invalide"}); const d=db(),weeks=parseExcel(req.file.path,team),old=d.plannings[team]||[]; d.plannings[team]=weeks.map(w=>{const prev=old.find(x=>x.id===w.id); return prev?{...w,status:prev.status||"draft",publishedAt:prev.publishedAt||null}:w}); notif(d,`Planning ${team} importé`,`${weeks.length} semaine(s) en brouillon.`,team,true); save(d); res.json({ok:true,count:weeks.length})});

@@ -13,3 +13,12 @@ Pour lancer :
 
 Fonction planning :
 Serveur Excel -> FreeFileSync -> Google Drive -> import dans Marina Team -> brouillon -> Rachel publie.
+
+
+V2.0 :
+- Import Excel corrigé pour les vrais onglets "Planning salle ..."
+- Ignore les feuilles "équipe complet", "modèle", "test"
+- Lit les horaires début/fin matin + soir
+- Affiche REPOS, CP, RÉCUP, ABS, JF
+- Affiche les semaines les plus récentes en premier
+- Début de design premium bleu nuit / doré
