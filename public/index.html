@@ -12,43 +12,37 @@
 <body>
   <div id="login" class="login-screen">
     <div class="login-overlay"></div>
-    <div class="login-card">
+    <div class="login-panel">
       <img class="login-logo" src="assets/logo-adelphia.png" alt="Marina Adelphia">
       <h1>MARINA TEAM</h1>
-      <label>Identifiant</label>
-      <input id="loginId" placeholder="ex : rachel, yanis, florian">
-      <label>Mot de passe</label>
-      <input id="password" type="password" placeholder="Mot de passe">
-      <button onclick="login()">Connexion</button>
-      <div id="loginError" class="error"></div>
-      <small>Test : rachel / 2802 · autres salariés / 0000</small>
+      <div class="login-card">
+        <label>Identifiant</label>
+        <input id="loginId" placeholder="ex : rachel, yanis, florian">
+        <label>Mot de passe</label>
+        <input id="password" type="password" placeholder="Mot de passe">
+        <button onclick="login()">Connexion</button>
+        <div id="loginError" class="error"></div>
+        <small>Test : rachel / 2802 · autres salariés / 0000</small>
+      </div>
     </div>
   </div>
 
   <div id="app" class="hidden app-shell">
-    <header>
+    <header class="sidebar">
       <div class="brand-block">
         <img src="assets/logo-adelphia.png" alt="Marina Adelphia">
         <strong>MARINA TEAM</strong>
       </div>
       <nav id="nav"></nav>
-      <div id="userBadge" class="user-badge"></div>
-      <button class="logout" onclick="logout()">Déconnexion</button>
+      <div class="sidebar-footer">
+        <div id="userBadge" class="user-badge"></div>
+        <button class="logout" onclick="logout()">Déconnexion</button>
+      </div>
     </header>
 
     <main>
       <section id="home" class="page active">
-        <div class="hero-card">
-          <div>
-            <h2>Bonjour, <span id="welcomeName"></span></h2>
-            <p id="welcomeRole"></p>
-          </div>
-        </div>
-        <div class="cards">
-          <div class="card"><span class="badge green">Connecté</span><h3>Bienvenue</h3><p>Votre espace Marina Team est prêt.</p></div>
-          <div class="card"><span class="badge blue">Accès</span><h3>Vos droits</h3><p id="accessText"></p></div>
-          <div class="card"><span class="badge yellow">Planning</span><h3>Brouillon → Publication</h3><p>Les semaines importées restent invisibles tant que Rachel ne publie pas.</p></div>
-        </div>
+        <div id="dashboardContent"></div>
       </section>
 
       <section id="plannings" class="page"><h2>Plannings</h2><div id="planningContent"></div></section>

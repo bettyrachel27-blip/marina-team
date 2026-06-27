@@ -1,16 +1,60 @@
 
 let token=localStorage.getItem("marina_token"),currentUser=JSON.parse(localStorage.getItem("marina_user")||"null");const $=id=>document.getElementById(id);
-const pages=[["home","🏠 Accueil"],["plannings","📅 Plannings"],["hours","⏱️ Mes heures"],["requests","🌿 CP / Repos"],["notices","📢 Général"],["passations","🔄 Passation"],["processes","📋 Process"],["notifications","🔔 Notifications"]];
+const pages=[["home","⌂ Accueil"],["plannings","▣ Plannings"],["hours","◷ Mes heures"],["requests","✦ CP / Repos"],["notices","◉ Général"],["passations","↻ Passation"],["processes","▤ Process"],["notifications","◌ Notifications"]];
 async function api(url,opt={}){const res=await fetch(url,{...opt,headers:{...(opt.body instanceof FormData?{}:{"Content-Type":"application/json"}),...(token?{Authorization:`Bearer ${token}`}:{})}});if(!res.ok){let msg=await res.text();try{msg=JSON.parse(msg).error||msg}catch{}throw new Error(msg)}return res.json()}
 async function login(){try{const d=await api("/api/login",{method:"POST",body:JSON.stringify({id:$("loginId").value.trim(),password:$("password").value})});token=d.token;currentUser=d.user;localStorage.setItem("marina_token",token);localStorage.setItem("marina_user",JSON.stringify(currentUser));showApp()}catch{$("loginError").style.display="block";$("loginError").textContent="Identifiant ou mot de passe incorrect."}}
-function logout(){localStorage.clear();location.reload()}function showApp(){$("login").classList.add("hidden");$("app").classList.remove("hidden");$("userBadge").textContent=`${currentUser.name} · ${currentUser.role}`;$("welcomeName").textContent=currentUser.name;$("welcomeRole").textContent=`${currentUser.poste} · ${currentUser.team}`;$("accessText").textContent=currentUser.role==="admin"?"Accès total : brouillons, publication, validation des heures.":currentUser.role==="manager"?"Manager : visibilité salle + cuisine et suivi des heures.":currentUser.team==="salle"?"Équipe salle : planning salle publié, mes heures, demandes.":"Équipe cuisine : planning cuisine publié, mes heures, demandes.";renderNav();loadAll()}
+function logout(){localStorage.clear();location.reload()}function showApp(){$("login").classList.add("hidden");$("app").classList.remove("hidden");$("userBadge").textContent=`${currentUser.name} · ${currentUser.role}`;renderNav();loadAll()}
 function renderNav(){$("nav").innerHTML=pages.map((p,i)=>`<button class="${i===0?'active':''}" onclick="openPage('${p[0]}',this)">${p[1]}</button>`).join("")}function openPage(id,btn){document.querySelectorAll(".page").forEach(p=>p.classList.remove("active"));$(id).classList.add("active");document.querySelectorAll("nav button").forEach(b=>b.classList.remove("active"));btn.classList.add("active")}
 async function loadAll(){await Promise.allSettled([loadPlannings(),loadHours(),loadRequests(),loadNotices(),loadProcesses(),loadNotifications()])}
 function badge(s){return s==="published"?`<span class="badge green">Publié</span>`:`<span class="badge yellow">Brouillon</span>`}
 function cellClass(v){let x=(v||"").toString().trim().toUpperCase();if(!x)return "status-empty";if(x==="CP")return "status-cp";if(x==="JF"||x.includes("JOUR F")||x.includes("FÉRI")||x.includes("FERI"))return "status-ferie";if(x==="ABS"||x.includes("ABSENCE"))return "status-abs";if(x.includes("ARR")||x.includes("MALAD"))return "status-maladie";return ""}
 function formatCell(v){let x=(v||"").toString().trim();return x?x.replace(/\s*\/\s*/g,"<br>"):"Repos"}
 function table(rows){let d=["Collaborateur","Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];return `<div class="table-wrap"><table><thead><tr>${d.map(x=>`<th>${x}</th>`).join("")}</tr></thead><tbody>${rows.map(r=>`<tr><td>${r.name}</td>${r.days.map(x=>`<td class="${cellClass(x)}"><span class="cell-chip">${formatCell(x)}</span></td>`).join("")}</tr>`).join("")}</tbody></table></div>`}
-async function loadPlannings(){const data=await api("/api/plannings");let h="";if(currentUser.role==="admin")h+=`<div class="card admin-box"><h3>📥 Importer un planning Excel en brouillon</h3><p>Importe le fichier synchronisé depuis Google Drive. Les semaines restent invisibles tant que Rachel ne publie pas.</p><label>Équipe</label><select id="importTeam"><option value="salle">Salle</option><option value="cuisine">Cuisine</option></select><label>Fichier Excel</label><input type="file" id="importFile" accept=".xlsx,.xlsb,.xls,.csv"><button onclick="importPlanning()">Importer en brouillon</button></div>`;for(const team of ["salle","cuisine"]){if(!data[team])continue;h+=`<h3>${team==="salle"?"📅 Planning Salle":"👨‍🍳 Planning Cuisine"}</h3>`;if(!data[team].length){h+=`<div class="card">Aucune semaine disponible.</div>`;continue}for(const w of data[team])h+=`<div class="card"><div class="week-head">${badge(w.status)}<strong>${w.label}</strong>${currentUser.role==="admin"?`<div>${w.status!=="published"?`<button onclick="publishWeek('${team}','${w.id}')">Publier</button>`:`<button class="secondary" onclick="unpublishWeek('${team}','${w.id}')">Remettre en brouillon</button>`}</div>`:""}</div>${table(w.rows||[])}</div>`}$("planningContent").innerHTML=h||`<div class="card">Aucun planning visible.</div>`}
+
+function yearFromLabel(label){let m=(label||"").match(/(20\d{2})/);return m?m[1]:new Date().getFullYear()}
+function shortLabel(label){return (label||"").replace(/^Planning\s+(salle|cuisine)\s+du\s+/i,"").replace(/\s+au\s+/i," → ")}
+function renderDashboard(data){
+  const salle=data.salle||[], cuisine=data.cuisine||[];
+  const all=[...salle,...cuisine];
+  const weeks=salle.length?salle:all;
+  const first=weeks[0];
+  const collaborators=new Set();
+  all.forEach(w=>(w.rows||[]).forEach(r=>collaborators.add(r.name)));
+  const published=all.filter(w=>w.status==="published").length;
+  const weekCards=weeks.slice(0,4).map((w,i)=>`<div class="week-card ${i===0?'active-week':''}">
+    <div class="stat-icon">▣</div>
+    <div class="week-date">${shortLabel(w.label)}</div>
+    <div class="week-year">${yearFromLabel(w.label)}</div>
+    <div class="week-mini">♨ Salle<br>⚑ Cuisine</div>
+    <div class="week-link" onclick="openPage('plannings', document.querySelector('nav button:nth-child(2)'))">Voir le planning →</div>
+  </div>`).join("") || `<div class="card">Aucun planning disponible.</div>`;
+  const preview = first ? `<div class="preview-card"><div class="week-head"><strong>Plannings › ${shortLabel(first.label)} ${yearFromLabel(first.label)}</strong>${currentUser.role==='admin'?'<button>Publier</button>':''}</div>${table((first.rows||[]).slice(0,5))}</div>` : `<div class="preview-card">Aucun planning à afficher.</div>`;
+  $("dashboardContent").innerHTML=`
+    <div class="home-grid">
+      <div class="home-visual"><div class="home-welcome"><h2>Bonjour ${currentUser.name},</h2><p>Voici un aperçu des plannings de votre établissement.</p></div></div>
+      <div class="dashboard-main">
+        <div class="top-line"></div>
+        <div class="stats">
+          <div class="stat-card"><div class="stat-icon">▣</div><div class="stat-number">${weeks.length}</div><div class="stat-label">Semaines</div><div class="stat-sub">à venir</div></div>
+          <div class="stat-card"><div class="stat-icon">♙</div><div class="stat-number">${collaborators.size}</div><div class="stat-label">Collaborateurs</div><div class="stat-sub">actifs</div></div>
+          <div class="stat-card"><div class="stat-icon">☑</div><div class="stat-number">${published}</div><div class="stat-label">Publications</div><div class="stat-sub">planning publié</div></div>
+          <div class="stat-card"><div class="stat-icon">◌</div><div class="stat-number">0</div><div class="stat-label">Notifications</div><div class="stat-sub">non lues</div></div>
+        </div>
+        <div class="section-title"><h3>Plannings des semaines à venir</h3>${currentUser.role==='admin'?'<button onclick="openPage(\'plannings\', document.querySelector(\'nav button:nth-child(2)\'))">Importer un planning</button>':''}</div>
+        <div class="week-cards">${weekCards}</div>
+      </div>
+    </div>
+    <div class="dashboard-row">
+      ${preview}
+      <div class="notification-panel"><h3>Notifications</h3>
+        <div class="notification-item"><div class="notif-icon">▣</div><div><strong>Nouveau planning détecté</strong><small>${first?shortLabel(first.label):'Aucun planning'}<br>Dernière importation</small></div></div>
+        <div class="notification-item"><div class="notif-icon">☑</div><div><strong>Planning publié</strong><small>Visible selon vos droits</small></div></div>
+        <div class="notification-item"><div class="notif-icon">✎</div><div><strong>Modification enregistrée</strong><small>Suivi des changements à venir</small></div></div>
+      </div>
+    </div>`;
+}
+
+async function loadPlannings(){const data=await api("/api/plannings");renderDashboard(data);let h="";if(currentUser.role==="admin")h+=`<div class="card admin-box"><h3>📥 Importer un planning Excel en brouillon</h3><p>Importe le fichier synchronisé depuis Google Drive. Les semaines restent invisibles tant que Rachel ne publie pas.</p><label>Équipe</label><select id="importTeam"><option value="salle">Salle</option><option value="cuisine">Cuisine</option></select><label>Fichier Excel</label><input type="file" id="importFile" accept=".xlsx,.xlsb,.xls,.csv"><button onclick="importPlanning()">Importer en brouillon</button></div>`;for(const team of ["salle","cuisine"]){if(!data[team])continue;h+=`<h3>${team==="salle"?"📅 Planning Salle":"👨‍🍳 Planning Cuisine"}</h3>`;if(!data[team].length){h+=`<div class="card">Aucune semaine disponible.</div>`;continue}for(const w of data[team])h+=`<div class="card"><div class="week-head">${badge(w.status)}<strong>${w.label}</strong>${currentUser.role==="admin"?`<div>${w.status!=="published"?`<button onclick="publishWeek('${team}','${w.id}')">Publier</button>`:`<button class="secondary" onclick="unpublishWeek('${team}','${w.id}')">Remettre en brouillon</button>`}</div>`:""}</div>${table(w.rows||[])}</div>`}$("planningContent").innerHTML=h||`<div class="card">Aucun planning visible.</div>`}
 async function importPlanning(){try{const f=$("importFile").files[0];if(!f)return alert("Choisis un fichier Excel.");const fd=new FormData();fd.append("team",$("importTeam").value);fd.append("file",f);const r=await api("/api/import-planning",{method:"POST",body:fd});alert(`Planning importé : ${r.count} semaine(s) détectée(s).\n${(r.labels||[]).join("\n")}`);loadAll()}catch(e){alert("Import impossible : "+e.message)}}async function publishWeek(t,id){await api(`/api/plannings/${t}/${id}/publish`,{method:"POST"});loadAll()}async function unpublishWeek(t,id){await api(`/api/plannings/${t}/${id}/unpublish`,{method:"POST"});loadAll()}
 function calc(s,e,p){if(!s||!e)return 0;let [sh,sm]=s.split(":").map(Number),[eh,em]=e.split(":").map(Number),m=(eh*60+em)-(sh*60+sm);if(m<0)m+=1440;if(p==="midi"||p==="soir")m-=30;if(p==="longue")m-=60;return Math.max(0,m)/60}
 function hourForm(){let days=["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];return `<div class="card"><h3>Ma saisie d'heures</h3><p>Contrat : <strong>${currentUser.contract}h</strong></p><div class="table-wrap"><table><thead><tr><th>Jour</th><th>Début</th><th>Fin</th><th>Pause</th><th>Total</th></tr></thead><tbody>${days.map((d,i)=>`<tr><td>${d}</td><td><input type="time" id="s${i}" onchange="updateTotal()"></td><td><input type="time" id="e${i}" onchange="updateTotal()"></td><td><select id="b${i}" onchange="updateTotal()"><option value="none">Aucune</option><option value="midi">Midi -30 min</option><option value="soir">Soir -30 min</option><option value="longue">Longue -1h</option></select></td><td id="t${i}">0h</td></tr>`).join("")}</tbody></table></div><h3>Total semaine : <span id="weekTotal">0h</span></h3><p>Écart contrat : <strong id="gapTotal">-${currentUser.contract}h</strong></p><button onclick="submitHours()">Envoyer mes heures</button></div>`}
