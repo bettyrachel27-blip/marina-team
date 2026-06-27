@@ -1,0 +1,14 @@
+
+<!DOCTYPE html><html lang="fr"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Marina Team</title><link rel="stylesheet" href="style.css"></head>
+<body>
+<div id="login" class="login-screen"><div class="login-card"><div class="logo">⚓</div><h1>Marina Team</h1><p>Application équipe salle & cuisine</p><label>Identifiant</label><input id="loginId" placeholder="ex : rachel, yanis, florian"><label>Mot de passe</label><input id="password" type="password" placeholder="Mot de passe"><button onclick="login()">Connexion</button><div id="loginError" class="error"></div><small>Test : rachel / 2802 · autres salariés / 0000</small></div></div>
+<div id="app" class="hidden"><header><div class="brand">⚓</div><div><strong>Hôtel Marina</strong><small>Restaurant & équipes · Aix-les-Bains</small></div><div id="userBadge" class="user-badge"></div><button class="logout" onclick="logout()">Déconnexion</button></header><nav id="nav"></nav><main>
+<section id="home" class="page active"><h2>Accueil</h2><div class="cards"><div class="card"><span class="badge green">Connecté</span><h3 id="welcomeName"></h3><p id="welcomeRole"></p></div><div class="card"><span class="badge blue">Accès</span><h3>Vos droits</h3><p id="accessText"></p></div><div class="card"><span class="badge yellow">Planning</span><h3>Brouillon → Publication</h3><p>Les semaines importées restent invisibles tant que Rachel ne publie pas.</p></div></div></section>
+<section id="plannings" class="page"><h2>Plannings</h2><div id="planningContent"></div></section>
+<section id="hours" class="page"><h2>Mes heures</h2><div id="hoursContent"></div></section>
+<section id="requests" class="page"><h2>CP / Repos</h2><div class="card warning"><strong>⚠️ Important :</strong> cette demande ne vaut pas validation. Elle sera étudiée par la direction ou le responsable.</div><div class="card"><label>Type</label><select id="reqType"><option>Congés payés</option><option>Repos</option><option>Sans solde</option><option>RTT</option></select><label>Du</label><input type="date" id="reqStart"><label>Au</label><input type="date" id="reqEnd"><label>Commentaire</label><input id="reqComment" placeholder="Optionnel"><button onclick="submitRequest()">Envoyer la demande</button></div><div id="requestsList"></div></section>
+<section id="notices" class="page"><h2>Général</h2><div id="noticesContent"></div></section>
+<section id="passations" class="page"><h2>Passation</h2><div class="card"><h3>Prévu V1.1</h3><p>Envoyer une passation à un collègue ou une équipe.</p></div></section>
+<section id="processes" class="page"><h2>Process</h2><div id="processContent"></div></section>
+<section id="notifications" class="page"><h2>Notifications</h2><div id="notificationsContent"></div></section>
+</main></div><script src="app.js"></script></body></html>
