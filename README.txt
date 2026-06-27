@@ -1,9 +1,15 @@
-# Marina Team V3.2
+# Marina Team V1 Pro
 
-Import Excel Adelphia corrigé :
-- prénoms lus en colonne B
-- horaires Excel convertis en 11h00-15h00
-- feuilles de planning salle/cuisine détectées
-- semaines récentes affichées en premier
+Connexion test :
+- Rachel : rachel / 2802
+- Autres salariés : identifiant + 0000
 
-Connexion test : rachel / 2802, salariés / 0000
+Pour lancer :
+1. Installer Node.js
+2. Dans ce dossier :
+   npm install
+   npm start
+3. Ouvrir http://localhost:3000
+
+Fonction planning :
+Serveur Excel -> FreeFileSync -> Google Drive -> import dans Marina Team -> brouillon -> Rachel publie.
