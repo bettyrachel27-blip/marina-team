@@ -33,101 +33,105 @@ function canSee(u,t){return u.role==="admin"||u.role==="manager"||u.team===t}
 function notif(d,title,body,team=null,admin=false){d.notifications.unshift({id:Date.now()+Math.random(),title,body,team,admin,createdAt:new Date().toISOString()})}
 function clean(x){return String(x||"").trim()}
 
-function normalizeText(v){return String(v ?? "").replace(/\s+/g," ").trim()}
-function isTimeNumber(v){return typeof v==="number" && isFinite(v) && v>=0 && v<1}
-function excelTime(v){
-  let total=Math.round(v*24*60);
-  total=((total%(24*60))+(24*60))%(24*60);
-  const h=String(Math.floor(total/60)).padStart(2,"0");
-  const m=String(total%60).padStart(2,"0");
-  return `${h}h${m}`;
+function clean(x){return String(x??"").replace(/\s+/g," ").trim()}
+function excelTimeToText(v){
+  if(typeof v!=="number" || !isFinite(v)) return clean(v);
+  let frac=((v%1)+1)%1;
+  let total=Math.round(frac*24*60);
+  let h=Math.floor(total/60)%24, m=total%60;
+  return `${String(h).padStart(2,"0")}h${String(m).padStart(2,"0")}`;
+}
+function excelHoursToText(v){
+  if(typeof v!=="number" || !isFinite(v)) return "";
+  let mins=Math.round(v*24*60);
+  if(mins<=0) return "";
+  let h=Math.floor(mins/60), m=mins%60;
+  return m?`${h}h${String(m).padStart(2,"0")}`:`${h}h00`;
 }
 function isStatusText(t){
-  const x=normalizeText(t).toUpperCase();
-  if(!x) return false;
-  return ["REPOS","RÉCUP","RECUP","CP","JF","ABS","ABSENCE","AM","MALADIE","FORMATION"].some(k=>x.includes(k));
+  const x=clean(t).toUpperCase();
+  return /^(CP|REPOS|RECUP|RÉCUP|ABS|ABSENCE|AM|FORMATION|MALADIE|OFF)$/.test(x) || x.includes("REPOS") || x.includes("CP");
 }
-function validName(name){
-  const n=normalizeText(name);
-  if(!n) return false;
-  const low=n.toLowerCase();
-  if(n.length<2 || n.length>40) return false;
-  if(/[0-9]/.test(n) && !low.includes("stagiaire")) return false;
-  const banned=["groupe","groupes","légende","legende","pause","total","brunch","attention","cuisine et salle","present","présent","repos","récup","recup","planning","lundi","mardi","mercredi","jeudi","vendredi","samedi","dimanche"];
-  if(banned.some(b=>low.includes(b))) return false;
-  return /[a-zA-ZÀ-ÿ]/.test(n);
-}
-function parseDayBlock(row, start){
-  const v=[row[start],row[start+1],row[start+2],row[start+3],row[start+4]];
-  const parts=[];
-  const notes=[];
-  // Statuts texte prioritaires : CP, REPOS, RÉCUP...
-  for(const cell of v){
-    const txt=normalizeText(cell);
-    if(txt && isStatusText(txt)) notes.push(txt.toUpperCase());
-  }
-  if(notes.length) return [...new Set(notes)].join(" / ");
-  // Chaque jour est construit en 5 colonnes : début 1, fin 1, début 2, fin 2, total.
-  if(isTimeNumber(v[0]) && isTimeNumber(v[1])) parts.push(`${excelTime(v[0])}-${excelTime(v[1])}`);
-  if(isTimeNumber(v[2]) && isTimeNumber(v[3])) parts.push(`${excelTime(v[2])}-${excelTime(v[3])}`);
-  // On ignore volontairement la 5e colonne, car c'est le total Excel et pas un horaire.
-  for(let i=0;i<4;i++){
-    const txt=normalizeText(v[i]);
-    if(txt && !isStatusText(txt) && !/^\d/.test(txt)) notes.push(txt);
-  }
-  if(parts.length && notes.length) return `${parts.join(" / ")}\n${[...new Set(notes)].join(" / ")}`;
-  return parts.join(" / ");
-}
-function sheetIsForTeam(sheet, team){
-  const l=sheet.toLowerCase();
-  if(team==="salle"){
-    if(!l.includes("planning salle")) return false;
-    if(l.includes("equipe complet") || l.includes("équipe complet") || l.includes("modèle") || l.includes("modele") || l.includes("test")) return false;
-    return true;
-  }
-  if(team==="cuisine") return l.includes("planning cuisine") && !l.includes("modele") && !l.includes("modèle") && !l.includes("test");
+function isBadName(name){
+  const n=clean(name).toLowerCase();
+  if(!n) return true;
+  if(/^[-–—]+$/.test(n)) return true;
+  if(/^(légende|legende|groupe|total|totaux|signature|pause)$/.test(n)) return true;
+  if(n.includes("attention") || n.includes("brunch") || n==="cuisine et salle" || n.includes("soirée") || n.includes("soiree")) return true;
+  if(/^\d+(\.\d+)?$/.test(n)) return true;
   return false;
 }
+function parsePlanningCell(block){
+  block=block||[];
+  const textVals=block.map(clean).filter(Boolean).filter(v=>isNaN(Number(v)));
+  const statuses=textVals.filter(isStatusText).map(v=>clean(v).toUpperCase());
+  if(statuses.length) return [...new Set(statuses)].join(" / ");
+
+  // Ton fichier Adelphia utilise 5 colonnes par jour : début1, fin1, début2, fin2, total.
+  // On ne prend donc que les 4 premières valeurs comme horaires et la 5e comme total.
+  const timeVals=block.slice(0,4).filter(v=>typeof v==="number" && isFinite(v) && v>0 && v<1);
+  const total=typeof block[4]==="number" && block[4]>0 ? excelHoursToText(block[4]) : "";
+  const shifts=[];
+  for(let i=0;i+1<timeVals.length;i+=2){
+    shifts.push(`${excelTimeToText(timeVals[i])}-${excelTimeToText(timeVals[i+1])}`);
+  }
+  let out=shifts.join("<br>");
+  const notes=textVals.filter(t=>!isStatusText(t));
+  if(notes.length) out += (out?"<br>":"") + notes.join("<br>");
+  if(total && out) out += `<br><small>${total}</small>`;
+  return out;
+}
+function extractDateStarts(dateRow){
+  const starts=[];
+  (dateRow||[]).forEach((v,i)=>{
+    if(typeof v==="number" && isFinite(v) && v>40000 && v<60000) starts.push(i);
+  });
+  // structure habituelle si certaines dates sont écrites en texte ou absentes
+  if(starts.length<5) return [2,7,12,17,22,27,32];
+  return starts.slice(0,7);
+}
 function parseExcel(file,team){
- const wb=XLSX.readFile(file,{cellDates:false});
- const matching=wb.SheetNames.filter(s=>sheetIsForTeam(s,team));
- // Pour éviter d'importer tout l'historique de mars à décembre, on garde les dernières semaines du classeur.
- const recent=matching.slice(-8);
+ const wb=XLSX.readFile(file,{cellDates:false,raw:true});
  const out=[];
- const days=["Lundi","Mardi","Mercredi","Jeudi","Vendredi","Samedi","Dimanche"];
- for(const sheet of recent){
-  const ws=wb.Sheets[sheet];
-  const rows=XLSX.utils.sheet_to_json(ws,{header:1,raw:true,blankrows:false,defval:""});
+ const reTeam=team==="salle"?/planning\s*salle/i:/planning\s*cuisine/i;
+ for(const sheet of wb.SheetNames){
+  const sheetLow=sheet.toLowerCase();
+  if(!reTeam.test(sheet)) continue;
+  if(sheetLow.includes("equipe complet") || sheetLow.includes("équipe complet") || sheetLow.includes("modèle") || sheetLow.includes("modele")) continue;
+  const rows=XLSX.utils.sheet_to_json(wb.Sheets[sheet],{header:1,raw:true,blankrows:false,defval:null});
+  if(!rows||rows.length<3) continue;
+
+  let dateRowIdx=rows.findIndex(r => (r||[]).filter(v=>typeof v==="number" && v>40000 && v<60000).length>=3);
+  if(dateRowIdx<0) dateRowIdx=1;
+  const starts=extractDateStarts(rows[dateRowIdx]);
   const planningRows=[];
-  // Structure réelle du planning salle Adelphia : colonne B = collaborateur, puis 7 blocs de 5 colonnes.
-  for(let r=0;r<Math.min(rows.length,80);r++){
+
+  for(let r=dateRowIdx+1;r<rows.length;r++){
     const row=rows[r]||[];
-    const name=normalizeText(row[1]);
-    if(!validName(name)) continue;
-    const dayVals=[];
-    let hasSomething=false;
-    for(let d=0;d<7;d++){
-      const txt=parseDayBlock(row,2+d*5);
-      if(txt) hasSomething=true;
-      dayVals.push(txt);
+    const name=clean(row[1]); // dans ton modèle, les prénoms sont en colonne B
+    if(isBadName(name)) {
+      const n=name.toLowerCase();
+      if(n==="légende" || n==="legende" || n==="groupe" || n==="total" || n==="totaux") break;
+      continue;
     }
-    if(hasSomething) planningRows.push({name,days:dayVals});
+    const days=starts.map(start=>parsePlanningCell(row.slice(start,start+5)));
+    if(days.some(Boolean)) planningRows.push({name,days});
   }
   if(planningRows.length){
     out.push({
       id:`${team}_${sheet.replace(/[^a-zA-Z0-9_-]/g,"_")}`,
-      label:sheet.replace(/^planning\s+/i,"Planning "),
+      label:sheet,
       team,
       status:"draft",
-      days,
       rows:planningRows,
-      importedAt:new Date().toISOString()
+      importedAt:new Date().toISOString(),
+      order:out.length
     });
   }
  }
- return out;
+ // Affiche les dernières feuilles du classeur en premier, car ton fichier est chronologique.
+ return out.reverse();
 }
-
 app.post("/api/login",(req,res)=>{const d=db(),u=d.users.find(x=>x.id===req.body.id); if(!u||!bcrypt.compareSync(req.body.password,u.passwordHash)) return res.status(401).json({error:"Identifiant ou mot de passe incorrect"}); const user=pub(u); res.json({token:jwt.sign(user,SECRET,{expiresIn:"7d"}),user})});
 app.get("/api/users",auth,(req,res)=>{const d=db(); if(req.user.role==="admin") return res.json(d.users.map(pub)); if(req.user.role==="manager") return res.json(d.users.filter(u=>u.team===req.user.team).map(pub)); res.json([req.user])});
 app.post("/api/import-planning",auth,upload.single("file"),(req,res)=>{if(req.user.role!=="admin") return res.status(403).json({error:"Réservé Rachel"}); const team=req.body.team; if(!["salle","cuisine"].includes(team)||!req.file) return res.status(400).json({error:"Fichier ou équipe invalide"}); const d=db(),weeks=parseExcel(req.file.path,team),old=d.plannings[team]||[]; d.plannings[team]=weeks.map(w=>{const prev=old.find(x=>x.id===w.id); return prev?{...w,status:prev.status||"draft",publishedAt:prev.publishedAt||null}:w}); notif(d,`Planning ${team} importé`,`${weeks.length} semaine(s) en brouillon.`,team,true); save(d); res.json({ok:true,count:weeks.length})});
